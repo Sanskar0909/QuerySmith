@@ -1,0 +1,15 @@
+# Secrets and local settings
+.env
+
+# Personal notes: learning log, build diary, filled-in tour. Kept off GitHub.
+notes/
+
+# Java / Maven build output
+target/
+
+# IntelliJ
+.idea/
+*.iml
+
+# macOS
+.DS_Store

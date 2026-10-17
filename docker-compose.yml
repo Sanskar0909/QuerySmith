@@ -1,0 +1,57 @@
+# The QuerySmith lab: one Postgres with slow queries planted in it.
+#
+#   docker compose up -d --build --wait    start it, and wait until it is ready
+#   docker compose down                    stop it, keep the data
+#   docker compose down -v                 stop it and throw the data away (full reset)
+#
+# Passwords here are deliberately trivial. This database only listens on your
+# own machine and holds made-up data. Never reuse any of this for a real one.
+services:
+  db:
+    build: ./db
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: shop
+    command:
+      - postgres
+      # pg_stat_statements has to be loaded when the server starts. Without
+      # this line the extension exists but records nothing.
+      - -c
+      - shared_preload_libraries=pg_stat_statements
+      # Two simplifications so the first plans you read have one step, not five.
+      # Both get switched back on at M4, where they become the lesson.
+      #   - no parallel workers: a scan shows as "Seq Scan", not "Gather" over
+      #     "Parallel Seq Scan" with per-worker numbers.
+      #   - no JIT: no extra "JIT:" block at the bottom of slow plans.
+      - -c
+      - max_parallel_workers_per_gather=0
+      - -c
+      - jit=off
+    ports:
+      # Host port 5433, so it does not clash with another Postgres on the
+      # usual 5432.
+      # 127.0.0.1 means only this machine can connect.
+      - "127.0.0.1:5433:5432"
+    volumes:
+      # Postgres 18 images keep data under /var/lib/postgresql (older ones
+      # used /var/lib/postgresql/data).
+      - pgdata:/var/lib/postgresql
+      # Scripts in this folder run once, the first time the database starts
+      # with an empty volume. To re-run them, do a full reset.
+      - ./db/init:/docker-entrypoint-initdb.d:ro
+      # The lab folder is visible inside the container as /lab, so psql and
+      # pgbench in there can read the seed and workload files.
+      - ./lab:/lab:ro
+    # "Healthy" means the database is ready for you, which "docker compose up
+    # --wait" waits for. On first start Postgres briefly runs a private copy of
+    # itself to execute db/init/. That copy does not listen on the network, so
+    # checking over the network (-h 127.0.0.1) only passes once setup is done.
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -U postgres -d shop"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+volumes:
+  pgdata:
