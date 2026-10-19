@@ -1,0 +1,17 @@
+#!/bin/sh
+# Runs the QuerySmith command line.
+#
+#   ./mvnw -q clean package           build it (once, and after every change)
+#   ./querysmith top --db <jdbc-url>  run it
+#
+# For the lab, set the URL once per terminal instead of typing it each time:
+#   export QUERYSMITH_DB='jdbc:postgresql://localhost:5433/shop?user=querysmith_ro&password=querysmith_ro'
+set -eu
+
+jar="$(dirname "$0")/target/querysmith.jar"
+if [ ! -f "$jar" ]; then
+  echo "querysmith: $jar not found. Build it first: ./mvnw -q clean package" >&2
+  exit 1
+fi
+
+exec java -jar "$jar" "$@"

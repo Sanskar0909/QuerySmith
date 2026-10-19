@@ -41,8 +41,8 @@ Numbers invented to show the shape:
 |---|---|---|
 | M0 | Lab: a Postgres with planted slow queries | done |
 | M1 | Every step done by hand, no code | done |
-| M2 | `querysmith top`: collect and rank | next |
-| M3 | Safe explain | |
+| M2 | `querysmith top`: collect and rank | done |
+| M3 | Safe explain | next |
 | M4 | Read the plan | |
 | M5 | Test an index, estimated | |
 | M6 | LLM explains and suggests | |
@@ -62,6 +62,43 @@ lab/psql.sh querysmith_ro
 
 Then follow `lab/TOUR.md`.
 
+## Run `querysmith top`
+
+Needs Java 25 or newer. Maven comes through its wrapper, and the tests need
+Docker.
+
+```bash
+./mvnw -q clean package            # build, and run the tests
+export QUERYSMITH_DB='jdbc:postgresql://localhost:5433/shop?user=querysmith_ro&password=querysmith_ro'
+./querysmith top                   # the ten queries with the most time in total
+./querysmith top --user shop_app --top 5
+./querysmith top --help
+```
+
+From the lab after one minute of traffic:
+
+```
+Connected as querysmith_ro to shop (PostgreSQL 18.6)
+
+Queries by total time, worst first. Share is out of all the time recorded in this
+database since pg_stat_statements was last reset.
+
+ #  share     total   calls  per call  login     query
+ 1  39.3%    92.3 s     480  192.3 ms  shop_app  SELECT product_id, quantity, unit_price_cents FROM order_items WHERE order_id...
+ 2  20.2%    47.3 s     710   66.7 ms  shop_app  SELECT id, status, total_cents, created_at FROM orders WHERE customer_id = $1...
+ 3  14.2%    33.4 s      53  630.1 ms  shop_app  SELECT c.email, count(*) AS closed_tickets FROM support_tickets AS t JOIN cus...
+ ...
+10   0.1%  278.2 ms  73,480  0.004 ms  shop_app  SELECT name, price_cents FROM products WHERE id = $1  [possible N+1]
+```
+
+The third query is three times slower per run than the first, but runs about
+a ninth as often, so it ranks lower. The tenth costs almost nothing per run and
+is flagged anyway: called 73,480 times in a minute, it is most likely one
+query per row of another query's result.
+
+Connected with a login that can change data, the tool refuses to run, names
+the tables that login could change, and prints the SQL for a read-only login.
+
 ## Docs
 
 | File | What it covers |
@@ -73,5 +110,6 @@ Then follow `lab/TOUR.md`.
 
 ## Stack
 
-PostgreSQL 18 with `pg_stat_statements` and HypoPG. The tool itself, from M2:
-Java, pgjdbc, picocli, Jackson, JUnit 5 with Testcontainers, Maven.
+PostgreSQL 18 with `pg_stat_statements` and HypoPG. The tool: Java 25, pgjdbc
+and picocli, built with Maven through its wrapper. Tests: JUnit 6, against a
+real Postgres started by Testcontainers. Jackson joins at M4, to read plans.

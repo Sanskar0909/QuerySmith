@@ -1,6 +1,6 @@
 # QuerySmith — design
 
-Last updated 2026-10-17. When a decision here changes, this file changes with it.
+Last updated 2026-10-19. When a decision here changes, this file changes with it.
 
 ## What it is
 
@@ -135,6 +135,22 @@ Each ends with something that runs.
     all database time. Time per call and calls are always shown beside it. A
     query that is very fast but called far more than anything else is flagged
     as a possible N+1 rather than ranked on its time.
+  - The flag, decided 2026-10-19: under 1 ms a run on average, and called at
+    least 10 times as often as the median query listed. Measured against the
+    median, one other busy query cannot hide it. In the lab the
+    products-by-id query is called hundreds of times as often as the median.
+- Design question: which rows are listed?
+  - Decided 2026-10-18: every row except those run by the tool's own login,
+    each shown with the login that ran it. `--user <login>` lists only that
+    login's queries. Administrator queries are not hidden automatically.
+  - Only queries run in the database the tool is connected to.
+    `pg_stat_statements` covers the whole server, and a query from another
+    database cannot be explained in this one.
+  - A query's share is out of all the time listed before `--user` narrows the
+    list, so it reads the same either way.
+- Design question: what if the login can do more than read?
+  - Decided 2026-10-18: the tool refuses to run, names what the login could
+    change, and prints the SQL that creates a read-only login.
 - Must not happen: a login that can do more than read; the tool listing its own queries.
 
 **M3 — Safe explain.** A real, timed plan for one top query.
@@ -193,10 +209,12 @@ database.
 | Command-line tool that prints a report | Smallest thing that shows the database work. Nearly all the effort goes into Postgres, not a UI. |
 | Plain Java, no Spring Boot | The tool runs, prints and exits, so there is no server to manage. |
 | One explicit database connection, no pool | The safety settings (read-only, timeouts) are set on the connection by hand. And a pretend index exists only inside the connection that created it, so a pool handing out a different connection per call would silently break the tester. |
-| pgjdbc, picocli, Jackson, JUnit 5 + Testcontainers, Maven | Driver, CLI parsing, plan JSON, tests against a real Postgres, and Maven through its wrapper, so Maven itself needs no install. |
+| pgjdbc, picocli, Jackson, JUnit 6 + Testcontainers, Maven | Driver, CLI parsing, plan JSON, tests against a real Postgres, and Maven through its wrapper, so Maven itself needs no install. |
 | The LLM arrives at M6 | Everything before it is plain code that can be tested, and the tester exists before there is any untrusted suggestion to test. |
 | Diagnose anything, prove indexes first | An index can be tried without touching the application or the data. |
 | `top` ranks by total time, not time per call | Total time is the share of the database's work a query uses, so fixing the top one frees the most. In the lab, a 10x fix to the top query by total saves 79 s per minute of traffic; the same fix to the top query by time per call saves 39 s. Ranking by time per call also puts rare reports first: a 30-second monthly report would top the list forever. Time per call is still shown, so a slow query is visible even when it is not first. |
+| `top` leaves out its own login's queries, and nobody else's unless asked | Every row in `pg_stat_statements` records the login that ran it, and the tool always knows its own (`current_user`). Listing only the application's login would need its name, which the tool cannot know on a database it has never seen. Its own test runs must not appear: from M3 it times slow queries itself, and those runs would rank as slow queries. Administrator queries stay, labelled with their login, because many applications connect as the administrator login and hiding it would hide the application. `--user` narrows the list when the application's login is known. |
+| Refuse a login that can change data, rather than warn | A read-only login is the safety net: if the tool has a bug and runs an `UPDATE`, Postgres refuses it. It also keeps the tool's login separate from the application's, which the rule above depends on. A warning fixes neither; it only reports them. |
 | Lab on Postgres 18 | Current major version; HypoPG is packaged for it. |
 
 ## How it is checked
