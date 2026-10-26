@@ -1,6 +1,6 @@
 # QuerySmith — design
 
-Last updated 2026-10-19. When a decision here changes, this file changes with it.
+Last updated 2026-10-21. When a decision here changes, this file changes with it.
 
 ## What it is
 
@@ -155,13 +155,82 @@ Each ends with something that runs.
 
 **M3 — Safe explain.** A real, timed plan for one top query.
 - Concepts: read-only transactions; timeouts; why the value put back for `$1` changes the plan.
-- Design question: which value goes back in? Which statements may be run at all?
+- Design question: which value goes back in for a `$1`?
+  - Decided 2026-10-21: two, each timed and reported separately. The
+    commonest value Postgres has recorded for the column (`most_common_vals`
+    in `pg_stats`), which is the worst case for an `=`, and a typical one,
+    which is what most runs see.
+  - Which values, decided 2026-10-26, by what `pg_stats` holds for the column:
+    - A commonest list and a histogram (`orders.customer_id`): the first
+      entry of the list, and the middle entry of the histogram, which sits
+      among the ordinary values (customer 1, 43,405 orders; customer 16540,
+      21 orders).
+    - A commonest list only, every value on it (`orders.status`): its first
+      and its last entry, the two ends (`delivered` 93%, `refunded` 0.9%).
+    - A histogram only, no value commoner than the rest
+      (`order_items.order_id`, `products.id`): one value, the middle of the
+      histogram, timed once.
+- Design question: what if a `$1` cannot be filled from the database?
+  - Decided 2026-10-21: the query keeps its place in the report with its plan
+    without values (`EXPLAIN (GENERIC_PLAN)`), labelled estimated, and the
+    report names each `$` it could not fill and what that `$` is compared
+    with. A value is never made up: a timing for a value no real user sends
+    would look measured and mean nothing. In the lab this covers
+    `lower(email) = $1`, `to_timestamp($1)` and `OFFSET $2`.
+- Design question: what if `pg_stats` is out of date?
+  - Decided 2026-10-21: values come from `pg_stats` while its statistics are
+    fresh by Postgres's own rule for refreshing them (by default, until more
+    than 50 rows plus 10% of the table have changed since they were taken).
+    When they are stale, values come from a random sample of the table's
+    pages (`TABLESAMPLE SYSTEM`) of about 30,000 rows, the size `ANALYZE`
+    itself takes, so a huge table does not mean a huge read, and
+    "statistics out of date" is reported as a finding. The tool cannot
+    refresh them itself: its login may not run `ANALYZE`, and fresh
+    statistics would change the application's plans. In the lab,
+    `pg_stats` says every support ticket is `open`; 300,000 of the 302,000
+    are `closed`.
+- Design question: what goes in for `LIMIT $2`?
+  - Decided 2026-10-21: the rows the query returned per call, from
+    `pg_stat_statements`, rounded up, and the report says where the number
+    came from. An application usually writes its `LIMIT` as a fixed number,
+    and every call that finds enough rows returns exactly that many. In the
+    lab this gives 20, 10, 50 and 20, the four limits the workload uses. Only
+    for a `LIMIT` at the very end of the query; a query that returned no
+    rows gets its plan without values instead.
+- Design question: which statements may be run at all?
+  - Decided 2026-10-26: only reads. A statement whose first word is
+    `SELECT`, `WITH` or `VALUES` is tried; anything else is reported as a
+    write and never sent. Whatever is tried runs inside a read-only
+    transaction, which refuses what the first word misses: an `UPDATE`
+    inside a `WITH`, `nextval()`, and row locks (`FOR UPDATE`,
+    `FOR SHARE`). Each refusal is reported with Postgres's reason.
+  - Three layers, each enough on its own for most cases: the read-only
+    login, wrapping every statement in `EXPLAIN` (which cannot wrap `DROP`,
+    `TRUNCATE`, `SET` or `COMMIT` at all), and the read-only transaction.
+  - A write gets no plan on the live database, not even an estimated one:
+    a read-only login may not plain-`EXPLAIN` a statement it may not run
+    (`permission denied for table orders`).
+- Design question: how long is too long?
+  - Decided 2026-10-26: each run may take 5 s (`statement_timeout`,
+    changeable with `--timeout`) and may wait 1 s for a lock
+    (`lock_timeout`). Both are set with `SET LOCAL` inside the read-only
+    transaction, so they end with it. A query whose recorded average time
+    per call is already over the limit is not started. A query skipped or
+    stopped gets its plan without values and the reason: "stopped after
+    5 s with `customer_id = 1`", or "`orders` was locked by another session".
+  - The limit is not only about the tool's own load. In the lab, while the
+    tool held a read of `orders` for 6 s, an `ALTER TABLE` waited behind it,
+    and the shop's one-row read waited 4 s behind the `ALTER TABLE`.
 - Must not happen: the tool changes data, or runs a ten-minute query on a live database.
 
 **M4 — Read the plan.** The plan as a tree in Java, and what went wrong in it.
 - Concepts: a plan is a tree of steps; a step can repeat thousands of times; a badly guessed row count.
 - Design question: how is a step modelled? How much time is each step itself responsible for?
 - Must not happen: a step that ran 300,000 times reported as taking 0.000 ms.
+- Noted in M3: a step under a `Limit` hands on fewer rows than it guessed,
+  because the guess assumes the step runs to the end (a Sort guessing 44,205
+  rows and handing on 5). That is not a bad guess and must not be reported
+  as one.
 
 **M5 — Test an index, estimated.** `querysmith try "CREATE INDEX ..."`.
 - Concepts: indexes on more than one column and why order matters; pretend indexes.
@@ -178,6 +247,10 @@ explanation plus index ideas, which go straight into M5.
 - Concepts: caching; why one timing run proves nothing.
 - Design question: what is a fair before and after?
 - Must not happen: comparing a cold first run with a warm second one; reporting the gain without the price.
+- Noted in M3: writes cannot be planned on the live database by a read-only
+  login. On the copy they can be run for real inside a transaction that is
+  rolled back, so their whole cost, finding the rows and changing them, can
+  be measured there.
 
 **M8 — Ship.** Report file, README, recorded demo, and one run against a real
 database.
@@ -198,6 +271,9 @@ database.
 3. A before and after for non-index fixes.
 4. "Worst in the last hour" instead of "worst since the counters were last reset".
 5. Reading plans pasted as text from logs.
+6. Slow writes on the live database: plan and time the `WHERE` part of an
+   `UPDATE` or `DELETE` as a `SELECT`, which a read-only login may run. A
+   slow write is usually slow at finding its rows.
 
 **Cut**
 - Web dashboard, applying indexes automatically, a monitoring daemon, databases other than Postgres.
@@ -215,6 +291,8 @@ database.
 | `top` ranks by total time, not time per call | Total time is the share of the database's work a query uses, so fixing the top one frees the most. In the lab, a 10x fix to the top query by total saves 79 s per minute of traffic; the same fix to the top query by time per call saves 39 s. Ranking by time per call also puts rare reports first: a 30-second monthly report would top the list forever. Time per call is still shown, so a slow query is visible even when it is not first. |
 | `top` leaves out its own login's queries, and nobody else's unless asked | Every row in `pg_stat_statements` records the login that ran it, and the tool always knows its own (`current_user`). Listing only the application's login would need its name, which the tool cannot know on a database it has never seen. Its own test runs must not appear: from M3 it times slow queries itself, and those runs would rank as slow queries. Administrator queries stay, labelled with their login, because many applications connect as the administrator login and hiding it would hide the application. `--user` narrows the list when the application's login is known. |
 | Refuse a login that can change data, rather than warn | A read-only login is the safety net: if the tool has a bug and runs an `UPDATE`, Postgres refuses it. It also keeps the tool's login separate from the application's, which the rule above depends on. A warning fixes neither; it only reports them. |
+| A `$1` is filled twice: with the commonest value and with a typical one | The same query can be fast for one value and slow for another, and an index chosen on one value can be wrong for the other. In the lab, an index on `orders (customer_id)` takes customer 4242 (51 orders, not among the commonest) from 42 ms to 0.4 ms, but customer 1 (43,405 orders, the commonest) still takes 9 to 25 ms. Tested on customer 4242 alone, that index looks as good as `(customer_id, created_at DESC)`, which makes both under 0.1 ms. Two values and not more, because each one is another real run of the query on a live database. |
+| Every run is a read inside a read-only transaction, with a time limit and a lock limit | A text check alone is fooled: `WITH x AS (UPDATE ...) SELECT ...` starts like a read. The read-only transaction judges what a statement does, and refused every write tried in the lab, including `nextval()` and row locks. Row locks are refused because they make the application's own updates wait: in the lab, an `UPDATE` waited for as long as a `FOR UPDATE` was held. The time limit also caps how long the tool can hold up a migration, and everyone queued behind it. |
 | Lab on Postgres 18 | Current major version; HypoPG is packaged for it. |
 
 ## How it is checked

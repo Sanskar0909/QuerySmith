@@ -4,6 +4,7 @@ import java.sql.Connection;
 import java.sql.DriverManager;
 import java.sql.SQLException;
 import java.sql.Statement;
+import java.util.Properties;
 
 import org.testcontainers.postgresql.PostgreSQLContainer;
 
@@ -37,7 +38,13 @@ final class TestDatabase {
     static Connection connect(String login, String database) throws SQLException {
         PostgreSQLContainer pg = container();
         String url = "jdbc:postgresql://" + pg.getHost() + ":" + pg.getMappedPort(5432) + "/" + database;
-        return DriverManager.getConnection(url, login, login);
+        Properties props = new Properties();
+        props.setProperty("user", login);
+        props.setProperty("password", login);
+        // A test whose code under test forgot its time limit fails after
+        // 30 s, instead of waiting out a pg_sleep(600) or a lock forever.
+        props.setProperty("socketTimeout", "30");
+        return DriverManager.getConnection(url, props);
     }
 
     /** A JDBC URL with the login and password in it, the way --db takes one. */
@@ -92,8 +99,13 @@ final class TestDatabase {
             // land in pg_stat_statements, which is shared by the whole server.
             "CREATE DATABASE other",
 
+            // A counter that only goes up. nextval() moves it on, and that
+            // is a change, even inside a SELECT.
+            "CREATE SEQUENCE ticket_numbers",
+
             "CREATE ROLE app LOGIN PASSWORD 'app'",
             "GRANT SELECT, INSERT, UPDATE ON products TO app",
+            "GRANT USAGE ON SEQUENCE ticket_numbers TO app",
             "GRANT USAGE ON SCHEMA \"Billing\" TO app",
             "GRANT INSERT ON \"Billing\".\"Invoices\" TO app",
             // Only on the parent. Inserting through it still puts rows into
