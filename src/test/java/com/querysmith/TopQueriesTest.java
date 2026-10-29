@@ -108,6 +108,17 @@ class TopQueriesTest {
         assertEquals(100, find(topAsTool(100, null), PRODUCT_BY_ID, "app").calls());
     }
 
+    // M3 takes a LIMIT's value from the rows a query returned per call.
+    @Test
+    void rowsAreReported() throws SQLException {
+        List<QueryStat> rows = topAsTool(100, null);
+
+        // 100 runs, one product each.
+        assertEquals(100, find(rows, PRODUCT_BY_ID, "app").rows());
+        // One run: ids 1 to 50, and every name starts with "product".
+        assertEquals(50, find(rows, LONG_QUERY, "app").rows());
+    }
+
     // Rounding and cutting are for the screen, and TopReport does them. Here
     // the numbers stay exact and the text whole, line breaks included.
     @Test

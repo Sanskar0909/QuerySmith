@@ -35,6 +35,7 @@ final class TopQueries {
         String sqlQuery = """
                 WITH listed AS (
                     SELECT pg_get_userbyid(userid) AS login,
+                           rows,
                            calls,
                            total_exec_time,
                            total_exec_time AS total_ms,
@@ -45,7 +46,7 @@ final class TopQueries {
                     WHERE userid <> (SELECT oid FROM pg_roles WHERE rolname = current_user)
                       AND dbid = (SELECT oid FROM pg_database WHERE datname = current_database())
                 )
-                SELECT login, calls, total_ms, mean_ms, share_pct, query
+                SELECT login, calls, rows, total_ms, mean_ms, share_pct, query
                 FROM listed
                 WHERE ? IS NULL OR login = ?
                 ORDER BY total_exec_time DESC
@@ -61,12 +62,13 @@ final class TopQueries {
                 while (rs.next()) {
                     String login = rs.getString(1);
                     long calls = rs.getLong(2);
-                    double totalMs = rs.getDouble(3);
-                    double meanMs = rs.getDouble(4);
-                    double sharePct = rs.getDouble(5);
-                    String query = rs.getString(6);
+                    long rows = rs.getLong(3);
+                    double totalMs = rs.getDouble(4);
+                    double meanMs = rs.getDouble(5);
+                    double sharePct = rs.getDouble(6);
+                    String query = rs.getString(7);
 
-                    QueryStat qs = new QueryStat(login, calls, totalMs, meanMs, sharePct, query);
+                    QueryStat qs = new QueryStat(login, calls, rows, totalMs, meanMs, sharePct, query);
                     queryStats.add(qs);
                 }
 

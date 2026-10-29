@@ -15,12 +15,14 @@ class TopReportTest {
     // Shaped like the lab after a minute of traffic. The last one is called
     // about 100 times as often as the next and takes a few microseconds a run.
     static final List<QueryStat> LAB = List.of(
-            new QueryStat("shop_app", 541, 112_560, 208.06, 39.19,
+            new QueryStat("shop_app", 541, 1_623, 112_560, 208.06, 39.19,
                     "SELECT product_id, quantity, unit_price_cents\nFROM order_items\nWHERE order_id = $1"),
-            new QueryStat("shop_app", 786, 55_726, 70.9, 19.4, "SELECT id, status FROM orders WHERE customer_id = $1"),
-            new QueryStat("shop_app", 68, 44_109, 648.7, 15.4, "SELECT c.email, count(*) FROM support_tickets t"),
-            new QueryStat("postgres", 1, 153.2, 153.2, 0.05, "SELECT t.table_name FROM tables t"),
-            new QueryStat("shop_app", 81_051, 356, 0.0044, 0.12, "SELECT name, price_cents FROM products WHERE id = $1"));
+            new QueryStat("shop_app", 786, 15_115, 55_726, 70.9, 19.4,
+                    "SELECT id, status FROM orders WHERE customer_id = $1"),
+            new QueryStat("shop_app", 68, 680, 44_109, 648.7, 15.4, "SELECT c.email, count(*) FROM support_tickets t"),
+            new QueryStat("postgres", 1, 12, 153.2, 153.2, 0.05, "SELECT t.table_name FROM tables t"),
+            new QueryStat("shop_app", 81_051, 81_051, 356, 0.0044, 0.12,
+                    "SELECT name, price_cents FROM products WHERE id = $1"));
 
     @Test
     void eachRowShowsShareTotalCallsTimePerCallAndLogin() {
@@ -64,7 +66,7 @@ class TopReportTest {
     @Test
     void frequentButSlowIsNotFlagged() {
         List<QueryStat> rows = new ArrayList<>(LAB.subList(0, 4));
-        rows.add(new QueryStat("shop_app", 81_051, 405_255, 5.0, 60, "SELECT 1"));
+        rows.add(new QueryStat("shop_app", 81_051, 81_051, 405_255, 5.0, 60, "SELECT 1"));
 
         assertArrayEquals(new boolean[] {false, false, false, false, false}, TopReport.possibleNPlusOne(rows));
     }

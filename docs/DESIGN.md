@@ -1,6 +1,6 @@
 # QuerySmith — design
 
-Last updated 2026-10-21. When a decision here changes, this file changes with it.
+Last updated 2026-10-28. When a decision here changes, this file changes with it.
 
 ## What it is
 
@@ -189,6 +189,20 @@ Each ends with something that runs.
     statistics would change the application's plans. In the lab,
     `pg_stats` says every support ticket is `open`; 300,000 of the 302,000
     are `closed`.
+  - Which values from a sample, decided 2026-10-28: the same shapes as for
+    `pg_stats`, judged from the sample's own counts, so the report reads
+    the same either way.
+    - At most 100 different values seen, the length of Postgres's own
+      commonest list: the most seen and the least seen (`closed` and
+      `open`), or the one value if only one was seen.
+    - More, and some value seen more than once: the most seen, and the
+      value of the row halfway down the sample sorted by the column.
+    - Every value seen once: the halfway row's value only.
+    - The open tickets in the lab sit together on the first 18 pages, and a
+      page sample misses them all about 15% of the time; then only `closed`
+      is timed. Always taking the least seen would fail for a column like
+      `customer_id`, where thousands of values are seen once and the least
+      seen is any one of them.
 - Design question: what goes in for `LIMIT $2`?
   - Decided 2026-10-21: the rows the query returned per call, from
     `pg_stat_statements`, rounded up, and the report says where the number
